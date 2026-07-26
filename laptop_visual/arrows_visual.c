@@ -34,9 +34,9 @@
 #define LANE_WIDTH      120
 #define LANE_GAP        20
 #define HIT_LINE_Y      500
-#define NOTE_H          28
+#define ARROW_SIZE      48        /* falling arrows are drawn in a square box this size */
 #define NOTE_SPEED_PXMS 0.35     /* pixels per millisecond fall speed */
-#define SPAWN_Y         (-NOTE_H)
+#define SPAWN_Y         (-ARROW_SIZE)
 #define MAX_NOTES       256
 
 /* Lane order: 0=Left, 1=Down, 2=Up, 3=Right */
@@ -78,6 +78,70 @@ static Note notes[MAX_NOTES];
 static int note_count = 0;
 static int next_chart_index = 0;
 static double chart_loop_offset_ms = 0.0;
+
+/* ---------------------------- Arrow shape drawing -------------------------
+   Builds an actual arrow silhouette (triangular head + rectangular shaft)
+   using SDL_RenderGeometry, which fills triangles with solid color.
+   Requires SDL2 2.0.18+ (standard in current MSYS2 packages -- if you get
+   an "undefined reference to SDL_RenderGeometry" linker error, run
+   `pacman -Syu` in MSYS2 to update your SDL2 package).
+
+   The template below is defined pointing UP, as 3 triangles (9 points)
+   in a normalized 0..1 x 0..1 box: a triangular head on top, a rectangular
+   shaft below it. map_point() rotates this template to point in whichever
+   direction the lane needs (left/down/up/right). */
+
+static const float ARROW_PTS[9][2] = {
+    /* head triangle: tip, right-base, left-base */
+    {0.5f, 0.0f}, {1.0f, 0.45f}, {0.0f, 0.45f},
+    /* shaft triangle 1 */
+    {0.3f, 0.45f}, {0.7f, 0.45f}, {0.7f, 1.0f},
+    /* shaft triangle 2 */
+    {0.3f, 0.45f}, {0.7f, 1.0f}, {0.3f, 1.0f},
+};
+
+/* Maps a normalized "pointing up" template point (u,v) into actual pixel
+   coordinates for a given lane direction, within box [x,y,w,h].
+   Lane order matches LANE_COLORS: 0=Left, 1=Down, 2=Up, 3=Right. */
+static void map_arrow_point(int lane, float u, float v,
+                             float x, float y, float w, float h,
+                             float *out_x, float *out_y) {
+    switch (lane) {
+        case 0: /* left: rotate so tip points left */
+            *out_x = x + v * w;
+            *out_y = y + u * h;
+            break;
+        case 1: /* down: flip vertically so tip points down */
+            *out_x = x + u * w;
+            *out_y = y + (1.0f - v) * h;
+            break;
+        case 2: /* up: template is already up-pointing */
+            *out_x = x + u * w;
+            *out_y = y + v * h;
+            break;
+        case 3: /* right: mirror of left */
+        default:
+            *out_x = x + (1.0f - v) * w;
+            *out_y = y + u * h;
+            break;
+    }
+}
+
+static void draw_arrow(SDL_Renderer *ren, int x, int y, int w, int h,
+                        int lane, SDL_Color color) {
+    SDL_Vertex verts[9];
+    for (int i = 0; i < 9; i++) {
+        float px, py;
+        map_arrow_point(lane, ARROW_PTS[i][0], ARROW_PTS[i][1],
+                         (float)x, (float)y, (float)w, (float)h, &px, &py);
+        verts[i].position.x = px;
+        verts[i].position.y = py;
+        verts[i].color = color;
+        verts[i].tex_coord.x = 0.0f;
+        verts[i].tex_coord.y = 0.0f;
+    }
+    SDL_RenderGeometry(ren, NULL, verts, 9, NULL, 0);
+}
 
 /* ---------------------------- Helpers ------------------------------------ */
 
@@ -191,16 +255,24 @@ int main(int argc, char **argv) {
         SDL_Rect hitline = { lane_x(0), HIT_LINE_Y, lane_x(NUM_LANES - 1) + LANE_WIDTH - lane_x(0), 4 };
         SDL_RenderFillRect(ren, &hitline);
 
-        /* falling notes */
+        /* dim target arrow outlines sitting on the hit line, showing
+           where each lane's arrows are headed */
+        for (int lane = 0; lane < NUM_LANES; lane++) {
+            SDL_Color c = LANE_COLORS[lane];
+            SDL_Color dim = { c.r / 4, c.g / 4, c.b / 4, 255 };
+            int box_x = lane_x(lane) + (LANE_WIDTH - ARROW_SIZE) / 2;
+            int box_y = HIT_LINE_Y - ARROW_SIZE / 2;
+            draw_arrow(ren, box_x, box_y, ARROW_SIZE, ARROW_SIZE, lane, dim);
+        }
+
+        /* falling notes, drawn as real arrow shapes */
         for (int i = 0; i < note_count; i++) {
             Note *n = &notes[i];
             if (!n->active) continue;
             SDL_Color c = LANE_COLORS[n->lane];
-            SDL_Rect r = { lane_x(n->lane) + 8, (int)n->y, LANE_WIDTH - 16, NOTE_H };
-            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 255);
-            SDL_RenderFillRect(ren, &r);
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderDrawRect(ren, &r);
+            int box_x = lane_x(n->lane) + (LANE_WIDTH - ARROW_SIZE) / 2;
+            int box_y = (int)n->y;
+            draw_arrow(ren, box_x, box_y, ARROW_SIZE, ARROW_SIZE, n->lane, c);
         }
 
         SDL_RenderPresent(ren);
