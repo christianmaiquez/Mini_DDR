@@ -118,3 +118,7 @@ static inline SDL_Color judgment_color(Judgment j) {
 #define PARTICLE_LIFE_MS         450.0
 #define SCREEN_FLASH_DURATION_MS 150.0
 #define MILESTONE_FLASH_DURATION_MS 900.0
+
+#define POSE_HOLD_MS             280.0   /* how long the dancer holds a hit pose */
+#define HYPE_HOLD_MS             700.0   /* how long the dancer holds the hype pose on milestones */
+#define FIRE_COMBO_THRESHOLD     30      /* combo needed to trigger "fire mode" screen effect */

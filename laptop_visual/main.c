@@ -4,7 +4,7 @@
    Orchestration only. Flow: difficulty menu -> gameplay loop.
 
    Build (Windows / MSYS2 MINGW64 terminal), from inside laptop_visual/:
-     gcc main.c game.c input.c render.c scoring.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
+     gcc main.c game.c input.c render.c scoring.c dancer.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
      ./arrows_visual.exe
 
    Requires SDL2 2.0.18+ (SDL_RenderGeometry) and SDL2_ttf. If "undefined

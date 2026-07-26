@@ -5,9 +5,25 @@
 #include "common.h"
 #include "input.h"
 #include "scoring.h"
+#include "dancer.h"
 #include <SDL2/SDL_ttf.h>
 
 #define ARC_PI 3.14159265358979323846
+
+static Uint8 clampu8(double v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (Uint8)v;
+}
+
+/* Scales visual intensity (glow/alpha) up as combo climbs, so the whole
+   screen feels progressively hotter the longer you're on a streak. Caps
+   out at 2.2x so it doesn't blow out to solid white at huge combos. */
+static double combo_intensity(void) {
+    double factor = 1.0 + (double)scoring_get_combo() / 60.0;
+    if (factor > 2.2) factor = 2.2;
+    return factor;
+}
 
 /* ---------------------------- Font state ----------------------------------- */
 
@@ -278,6 +294,30 @@ static void draw_crt_overlay(SDL_Renderer *ren) {
     }
 }
 
+/* Combo-based "fire mode": once combo passes FIRE_COMBO_THRESHOLD, a warm
+   pulsing border kicks in around the screen edge, intensifying with combo
+   and pulsing on the beat -- a visual reward for a long streak, similar
+   to "full combo" glow effects in real rhythm-game cabinets. */
+static void draw_combo_fire(SDL_Renderer *ren, double time_ms) {
+    int combo = scoring_get_combo();
+    if (combo < FIRE_COMBO_THRESHOLD) return;
+
+    double intensity = (double)(combo - FIRE_COMBO_THRESHOLD) / 60.0;
+    if (intensity > 1.0) intensity = 1.0;
+
+    double pulse = beat_pulse(time_ms);
+    Uint8 alpha = (Uint8)(50 * intensity * (0.5 + 0.5 * pulse));
+
+    SDL_Color fire = { 255, 90, 20, 255 }; /* warm orange-red */
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+    for (int i = 0; i < 24; i += 4) {
+        SDL_SetRenderDrawColor(ren, fire.r, fire.g, fire.b, (Uint8)(alpha / (i / 4 + 1)));
+        SDL_Rect r = { i, i, WINDOW_W - i * 2, WINDOW_H - i * 2 };
+        SDL_RenderDrawRect(ren, &r);
+    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+}
+
 /* ---------------------------- Text / HUD ------------------------------------ */
 
 static void render_text_neon(SDL_Renderer *ren, TTF_Font *font, const char *text,
@@ -383,6 +423,7 @@ void render_draw_menu(SDL_Renderer *ren, double time_ms) {
 /* ---------------------------- Public API ----------------------------------- */
 
 void render_init(void) {
+    dancer_init();
     g_ttf_ok = (TTF_Init() == 0);
     if (!g_ttf_ok) {
         fprintf(stderr, "TTF_Init failed (continuing without text): %s\n", TTF_GetError());
@@ -414,6 +455,7 @@ void render_on_hit(int lane, Judgment j, int milestone_combo, double now_ms) {
 
     SDL_Color color = judgment_color(j);
     spawn_particles(lane, color, now_ms);
+    dancer_on_hit(lane, j, now_ms);
 
     if (j == JUDGE_PERFECT) {
         g_screen_flash_time_ms = now_ms;
@@ -423,6 +465,7 @@ void render_on_hit(int lane, Judgment j, int milestone_combo, double now_ms) {
     if (milestone_combo > 0) {
         g_milestone_value = milestone_combo;
         g_milestone_time_ms = now_ms;
+        dancer_trigger_hype(now_ms);
     }
 }
 
@@ -435,10 +478,12 @@ void render_frame(SDL_Renderer *ren, double song_time_ms,
     draw_target_arrows(ren, song_time_ms);
     draw_falling_notes(ren, notes, note_count);
     draw_particles(ren, song_time_ms);
+    dancer_draw(ren, song_time_ms);
     draw_hud(ren);
     draw_judgment_flash(ren, song_time_ms);
     draw_milestone_flash(ren, song_time_ms);
     draw_screen_flash(ren, song_time_ms);
+    draw_combo_fire(ren, song_time_ms);
     draw_crt_overlay(ren);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 }
