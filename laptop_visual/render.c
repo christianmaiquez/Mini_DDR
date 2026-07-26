@@ -1,30 +1,99 @@
 #include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
 #include "render.h"
 #include "common.h"
 #include "input.h"
 #include "scoring.h"
+#include <SDL2/SDL_ttf.h>
 
-#ifdef _WIN32
-#include <SDL2/SDL_ttf.h>
-#else
-#include <SDL2/SDL_ttf.h>
-#endif
+#define ARC_PI 3.14159265358979323846
 
 /* ---------------------------- Font state ----------------------------------- */
 
 static int g_ttf_ok = 0;
 static TTF_Font *g_font_large = NULL;
 static TTF_Font *g_font_small = NULL;
+static TTF_Font *g_font_huge = NULL;
 
-/* ---------------------------- Judgment flash state -------------------------- */
+/* ---------------------------- Judgment / milestone / screen-flash state ---- */
 
 static Judgment g_flash_judgment = JUDGE_NONE;
 static double g_flash_time_ms = -1e18;
 #define JUDGMENT_FLASH_DURATION_MS 550.0
 
-/* ---------------------------- Arrow shape drawing -------------------------
-   Same arrow-silhouette approach as before: triangular head + rectangular
-   shaft, built with SDL_RenderGeometry, rotated per lane direction. */
+static int g_milestone_value = 0;
+static double g_milestone_time_ms = -1e18;
+
+static double g_screen_flash_time_ms = -1e18;
+static SDL_Color g_screen_flash_color = {255, 255, 255, 255};
+
+/* ---------------------------- Particles ------------------------------------ */
+
+typedef struct {
+    float x0, y0;
+    float vx, vy;   /* px per ms */
+    SDL_Color color;
+    double born_ms;
+    int active;
+} Particle;
+
+static Particle g_particles[MAX_PARTICLES];
+static int g_particle_next = 0;
+
+static double rand01_local(void);
+
+static void spawn_particles(int lane, SDL_Color color, double now_ms) {
+    int origin_x = lane_x(lane) + LANE_WIDTH / 2;
+    int origin_y = HIT_LINE_Y;
+    int count = 14;
+
+    for (int i = 0; i < count; i++) {
+        Particle *p = &g_particles[g_particle_next];
+        g_particle_next = (g_particle_next + 1) % MAX_PARTICLES;
+
+        double angle = rand01_local() * 2.0 * ARC_PI;
+        double speed = 0.06 + rand01_local() * 0.10; /* px/ms */
+
+        p->x0 = (float)origin_x;
+        p->y0 = (float)origin_y;
+        p->vx = (float)(cos(angle) * speed);
+        p->vy = (float)(sin(angle) * speed - 0.03);
+        p->color = color;
+        p->born_ms = now_ms;
+        p->active = 1;
+    }
+}
+
+static void draw_particles(SDL_Renderer *ren, double song_time_ms) {
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        Particle *p = &g_particles[i];
+        if (!p->active) continue;
+        double age = song_time_ms - p->born_ms;
+        if (age < 0 || age > PARTICLE_LIFE_MS) { p->active = 0; continue; }
+
+        float t = (float)(age / PARTICLE_LIFE_MS);
+        float gravity = 0.00025f;
+        float x = p->x0 + p->vx * (float)age;
+        float y = p->y0 + p->vy * (float)age + gravity * (float)age * (float)age;
+
+        SDL_Color c = p->color;
+        c.a = (Uint8)(255 * (1.0f - t));
+
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+        int size = (int)(5 * (1.0f - t)) + 2;
+        SDL_Rect r = { (int)x - size / 2, (int)y - size / 2, size, size };
+        SDL_RenderFillRect(ren, &r);
+    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+}
+
+static double rand01_local(void) {
+    return (double)rand() / (double)RAND_MAX;
+}
+
+/* ---------------------------- Arrow shape drawing --------------------------- */
 
 static const float ARROW_PTS[9][2] = {
     {0.5f, 0.0f}, {1.0f, 0.45f}, {0.0f, 0.45f},
@@ -77,9 +146,19 @@ static void draw_arrow_neon(SDL_Renderer *ren, int box_x, int box_y, int size,
     draw_arrow(ren, (float)box_x, (float)box_y, (float)size, (float)size, lane, color);
 }
 
+/* ---------------------------- Beat pulse ------------------------------------
+   Simple sawtooth pulse synced to a fixed BPM: snaps bright on the beat,
+   decays until the next one. Purely a visual metronome -- not tied to any
+   real audio yet. */
+static double beat_pulse(double time_ms) {
+    double beat_period_ms = 60000.0 / BPM;
+    double phase = fmod(time_ms, beat_period_ms) / beat_period_ms; /* 0..1 */
+    return 1.0 - phase;
+}
+
 /* ---------------------------- Background / lanes ---------------------------- */
 
-static void draw_background(SDL_Renderer *ren) {
+static void draw_background(SDL_Renderer *ren, double time_ms) {
     for (int row = 0; row < WINDOW_H; row++) {
         float t = (float)row / (float)WINDOW_H;
         Uint8 r = (Uint8)(BG_TOP.r + (BG_BOTTOM.r - BG_TOP.r) * t);
@@ -88,13 +167,18 @@ static void draw_background(SDL_Renderer *ren) {
         SDL_SetRenderDrawColor(ren, r, g, b, 255);
         SDL_RenderDrawLine(ren, 0, row, WINDOW_W, row);
     }
+
+    double pulse = beat_pulse(time_ms);
+    Uint8 grid_alpha = (Uint8)(GRID_COLOR.a * (0.5 + 0.5 * pulse));
+
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
+    SDL_SetRenderDrawColor(ren, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, grid_alpha);
     for (int x = 0; x < WINDOW_W; x += 40) SDL_RenderDrawLine(ren, x, 0, x, WINDOW_H);
     for (int y = 0; y < WINDOW_H; y += 40) SDL_RenderDrawLine(ren, 0, y, WINDOW_W, y);
 }
 
-static void draw_lanes(SDL_Renderer *ren) {
+static void draw_lanes(SDL_Renderer *ren, double time_ms) {
+    double pulse = beat_pulse(time_ms);
     for (int lane = 0; lane < NUM_LANES; lane++) {
         SDL_Color c = LANE_COLORS[lane];
         SDL_Rect lane_rect = { lane_x(lane), 0, LANE_WIDTH, WINDOW_H };
@@ -104,10 +188,11 @@ static void draw_lanes(SDL_Renderer *ren) {
         SDL_RenderFillRect(ren, &lane_rect);
 
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
-        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 90);
+        Uint8 border_alpha = (Uint8)(90 * (0.6 + 0.4 * pulse));
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, border_alpha);
         SDL_RenderDrawRect(ren, &lane_rect);
         SDL_Rect inset = { lane_rect.x + 1, lane_rect.y, lane_rect.w - 2, lane_rect.h };
-        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 50);
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, (Uint8)(border_alpha * 0.55));
         SDL_RenderDrawRect(ren, &inset);
     }
 }
@@ -162,10 +247,38 @@ static void draw_falling_notes(SDL_Renderer *ren, const Note *notes, int note_co
     }
 }
 
-/* ---------------------------- Text / HUD ------------------------------------
-   Renders text with a soft neon glow: a few enlarged additive-blended
-   copies behind a crisp copy on top. Falls back to doing nothing if the
-   font failed to load, so a missing font never crashes the game. */
+/* ---------------------------- Screen flash / CRT overlay -------------------- */
+
+static void draw_screen_flash(SDL_Renderer *ren, double song_time_ms) {
+    double age = song_time_ms - g_screen_flash_time_ms;
+    if (age < 0 || age >= SCREEN_FLASH_DURATION_MS) return;
+    double t = age / SCREEN_FLASH_DURATION_MS;
+    Uint8 alpha = (Uint8)(90 * (1.0 - t));
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+    SDL_SetRenderDrawColor(ren, g_screen_flash_color.r, g_screen_flash_color.g,
+                            g_screen_flash_color.b, alpha);
+    SDL_Rect full = { 0, 0, WINDOW_W, WINDOW_H };
+    SDL_RenderFillRect(ren, &full);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+}
+
+static void draw_crt_overlay(SDL_Renderer *ren) {
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 35);
+    for (int y = 0; y < WINDOW_H; y += 3) {
+        SDL_RenderDrawLine(ren, 0, y, WINDOW_W, y);
+    }
+
+    /* cheap vignette: a few nested translucent black rectangle borders */
+    for (int i = 0; i < 40; i += 8) {
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, (Uint8)(6));
+        SDL_Rect r = { i, i, WINDOW_W - i * 2, WINDOW_H - i * 2 };
+        SDL_RenderDrawRect(ren, &r);
+    }
+}
+
+/* ---------------------------- Text / HUD ------------------------------------ */
 
 static void render_text_neon(SDL_Renderer *ren, TTF_Font *font, const char *text,
                               int x, int y, SDL_Color color, int centered) {
@@ -198,7 +311,6 @@ static void render_text_neon(SDL_Renderer *ren, TTF_Font *font, const char *text
 
 static void draw_hud(SDL_Renderer *ren) {
     char buf[96];
-
     SDL_Color white  = {255, 255, 255, 255};
     SDL_Color cyan   = {  0, 230, 255, 255};
     SDL_Color yellow = {255, 220,   0, 255};
@@ -216,16 +328,56 @@ static void draw_hud(SDL_Renderer *ren) {
 static void draw_judgment_flash(SDL_Renderer *ren, double song_time_ms) {
     if (g_flash_judgment == JUDGE_NONE) return;
     double age = song_time_ms - g_flash_time_ms;
-    if (age >= JUDGMENT_FLASH_DURATION_MS) return;
+    if (age < 0 || age >= JUDGMENT_FLASH_DURATION_MS) return;
 
-    double t = age / JUDGMENT_FLASH_DURATION_MS; /* 0..1 */
+    double t = age / JUDGMENT_FLASH_DURATION_MS;
     SDL_Color color = judgment_color(g_flash_judgment);
     color.a = (Uint8)(255 * (1.0 - t) + 40 * t);
 
-    /* pop-in scale effect: start slightly big, settle down */
     int y_offset = (int)(-20 * (1.0 - t));
     render_text_neon(ren, g_font_large, judgment_label(g_flash_judgment),
                       WINDOW_W / 2, HIT_LINE_Y - 90 + y_offset, color, 1);
+}
+
+static void draw_milestone_flash(SDL_Renderer *ren, double song_time_ms) {
+    if (g_milestone_value <= 0) return;
+    double age = song_time_ms - g_milestone_time_ms;
+    if (age < 0 || age >= MILESTONE_FLASH_DURATION_MS) return;
+
+    double t = age / MILESTONE_FLASH_DURATION_MS;
+    SDL_Color gold = { 255, 215, 0, 255 };
+    gold.a = (Uint8)(255 * (1.0 - t) + 40 * t);
+
+    /* quick pop-in scale via vertical offset + using the huge font */
+    int y_offset = (int)(-15 * (1.0 - t) * (1.0 - t));
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%d COMBO!", g_milestone_value);
+    render_text_neon(ren, g_font_huge ? g_font_huge : g_font_large, buf,
+                      WINDOW_W / 2, 110 + y_offset, gold, 1);
+}
+
+/* ---------------------------- Menu screen ------------------------------------ */
+
+void render_draw_menu(SDL_Renderer *ren, double time_ms) {
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    draw_background(ren, time_ms);
+    draw_crt_overlay(ren);
+
+    SDL_Color white  = {255, 255, 255, 255};
+    SDL_Color magenta = {255, 0, 160, 255};
+    SDL_Color cyan = {0, 230, 255, 255};
+    SDL_Color green = {80, 255, 60, 255};
+    SDL_Color yellow = {255, 220, 0, 255};
+
+    render_text_neon(ren, g_font_huge ? g_font_huge : g_font_large,
+                      "SELECT DIFFICULTY", WINDOW_W / 2, 120, magenta, 1);
+
+    render_text_neon(ren, g_font_large, "1  -  EASY",   WINDOW_W / 2, 260, cyan, 1);
+    render_text_neon(ren, g_font_large, "2  -  NORMAL", WINDOW_W / 2, 330, green, 1);
+    render_text_neon(ren, g_font_large, "3  -  HARD",   WINDOW_W / 2, 400, yellow, 1);
+
+    render_text_neon(ren, g_font_small, "Press 1, 2, or 3 to start  |  ESC to quit",
+                      WINDOW_W / 2, 500, white, 1);
 }
 
 /* ---------------------------- Public API ----------------------------------- */
@@ -238,6 +390,7 @@ void render_init(void) {
     }
     g_font_large = TTF_OpenFont(FONT_PATH, FONT_SIZE_LARGE);
     g_font_small = TTF_OpenFont(FONT_PATH, FONT_SIZE_SMALL);
+    g_font_huge  = TTF_OpenFont(FONT_PATH, FONT_SIZE_LARGE + 20);
     if (!g_font_large || !g_font_small) {
         fprintf(stderr, "TTF_OpenFont failed for '%s' (continuing without text): %s\n",
                 FONT_PATH, TTF_GetError());
@@ -247,6 +400,7 @@ void render_init(void) {
 void render_shutdown(void) {
     if (g_font_large) TTF_CloseFont(g_font_large);
     if (g_font_small) TTF_CloseFont(g_font_small);
+    if (g_font_huge)  TTF_CloseFont(g_font_huge);
     if (g_ttf_ok) TTF_Quit();
 }
 
@@ -255,15 +409,36 @@ void render_set_judgment_flash(Judgment j, double now_ms) {
     g_flash_time_ms = now_ms;
 }
 
+void render_on_hit(int lane, Judgment j, int milestone_combo, double now_ms) {
+    render_set_judgment_flash(j, now_ms);
+
+    SDL_Color color = judgment_color(j);
+    spawn_particles(lane, color, now_ms);
+
+    if (j == JUDGE_PERFECT) {
+        g_screen_flash_time_ms = now_ms;
+        g_screen_flash_color = color;
+    }
+
+    if (milestone_combo > 0) {
+        g_milestone_value = milestone_combo;
+        g_milestone_time_ms = now_ms;
+    }
+}
+
 void render_frame(SDL_Renderer *ren, double song_time_ms,
                    const Note *notes, int note_count) {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    draw_background(ren);
-    draw_lanes(ren);
+    draw_background(ren, song_time_ms);
+    draw_lanes(ren, song_time_ms);
     draw_hit_line(ren);
     draw_target_arrows(ren, song_time_ms);
     draw_falling_notes(ren, notes, note_count);
+    draw_particles(ren, song_time_ms);
     draw_hud(ren);
     draw_judgment_flash(ren, song_time_ms);
+    draw_milestone_flash(ren, song_time_ms);
+    draw_screen_flash(ren, song_time_ms);
+    draw_crt_overlay(ren);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 }

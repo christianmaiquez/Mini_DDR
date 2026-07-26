@@ -109,3 +109,12 @@ static inline SDL_Color judgment_color(Judgment j) {
 #define FONT_SIZE_SMALL 22
 
 #endif /* COMMON_H */
+
+/* ---------------------------- Polish / effects config ---------------------- */
+
+#define MILESTONE_STEP           25     /* show a "X COMBO!" popup every N combo */
+#define BPM                      128.0  /* drives the background beat-pulse */
+#define MAX_PARTICLES            300
+#define PARTICLE_LIFE_MS         450.0
+#define SCREEN_FLASH_DURATION_MS 150.0
+#define MILESTONE_FLASH_DURATION_MS 900.0

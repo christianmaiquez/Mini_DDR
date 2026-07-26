@@ -4,39 +4,42 @@
 #include "common.h"
 
 /* ==========================================================================
-   game.h — game state and logic: note spawning, falling, and hit judging.
-   No SDL rendering calls in here -- this module only tracks *what* is
-   happening in the game, not how it looks on screen.
+   game.h — game state and logic: note spawning (now randomized), falling,
+   and hit judging. No SDL rendering calls in here.
    ========================================================================== */
 
 typedef struct {
     int lane;
     double spawn_time_ms;
     double y;
-    int active;   /* still on screen / eligible to be hit */
-    int judged;    /* already scored (hit or auto-missed) -- won't be judged again */
+    int active;
+    int judged;
 } Note;
 
+typedef enum { DIFF_EASY, DIFF_NORMAL, DIFF_HARD } Difficulty;
+
+/* Sets note speed, spawn density, and chord frequency for the given
+   difficulty. Call this BEFORE game_init() (typically right after the
+   player picks a difficulty on the menu screen). */
+void game_set_difficulty(Difficulty d);
+
+/* Resets game state: clears notes and restarts the random spawn clock.
+   Does NOT reset difficulty -- call game_set_difficulty() separately if
+   you want to change it. */
 void game_init(void);
 
-/* Advances the game by one frame: spawns due notes, updates their
-   position, and auto-misses any note that scrolled past the hit line
-   without being pressed (registering JUDGE_MISS with scoring.c internally).
-   Returns JUDGE_MISS if at least one auto-miss happened this frame (so
-   main.c can trigger a "MISS" flash), otherwise JUDGE_NONE.
-   Note: if multiple notes auto-miss in the same frame, only one MISS
-   flash is reported -- a deliberate simplification, each miss still
-   counts toward score/combo regardless. */
+/* Advances the game by one frame: randomly spawns due notes, updates
+   their position, and auto-misses anything that scrolled past the judge
+   window unhit. Returns JUDGE_MISS if at least one auto-miss happened
+   this frame (for triggering a flash), otherwise JUDGE_NONE. */
 Judgment game_update(double song_time_ms);
 
-/* Attempts to hit the closest unjudged note in the given lane. If a note
-   is within JUDGE_WINDOW_PX of the hit line, it's judged (PERFECT/GREAT/
-   GOOD/BOO based on distance), scored via scoring.c, and consumed.
-   If no note is close enough, returns JUDGE_NONE and nothing is consumed
-   -- pressing with nothing nearby is simply ignored, not punished. */
-Judgment game_try_hit(int lane, double song_time_ms);
+/* Attempts to hit the closest unjudged note in the given lane. If out_milestone
+   is non-NULL, it's set to the new combo value if this hit just crossed a
+   MILESTONE_STEP boundary, or 0 otherwise. Returns JUDGE_NONE (no note
+   consumed) if nothing was close enough to judge. */
+Judgment game_try_hit(int lane, double song_time_ms, int *out_milestone);
 
-/* Read-only access for the renderer. */
 const Note *game_get_notes(int *out_count);
 
 #endif /* GAME_H */
