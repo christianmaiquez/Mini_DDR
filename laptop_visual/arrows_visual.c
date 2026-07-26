@@ -1,18 +1,21 @@
 /* ==========================================================================
-   STEP 1: FALLING ARROWS VISUAL — ARCADE / NEON STYLE
+   STEP 2: FALLING ARROWS + KEYBOARD INPUT (WASD TEST MODE)
    --------------------------------------------------------------------------
-   Same core mechanic as before (4 lanes, arrows fall to a hit line), now
-   styled to look more like an actual arcade DDR cabinet:
-     - Bright neon color palette (magenta / cyan / green / yellow)
-     - Gradient background with a retro synthwave grid, not flat dark gray
-     - Arrows have a black outline + soft glow for contrast and pop
-     - Neon-bordered lanes with a translucent colored panel
+   Same arcade-styled falling arrows as before, now with keyboard input
+   detection layered on top:
+     - A / S / W / D = Left / Down / Up / Right (lanes 0,1,2,3)
+     - Pressing the correct key makes that lane's target arrow flash
+       bright and glow at the hit line
+     - Each press also prints to the console, so you can confirm input
+       is registering even before scoring exists
 
-   No scoring, no key input yet -- still purely the visual foundation.
-   We'll add:
-     Step 2: key press detection (WASD test mode)
-     Step 3: scoring based on hits
-     Step 4: serial input from the real FSR pad
+   Still no scoring yet -- that's next. This step is purely about proving
+   key detection works cleanly before we tie it to hit judging and, after
+   that, real FSR pad input over serial.
+
+   We'll add next:
+     Step 3: scoring based on hits (distance from hit line, or simple +1)
+     Step 4: serial input from the real FSR pad, replacing/supplementing WASD
 
    Build (Windows / MSYS2 MINGW64 terminal):
      gcc arrows_visual.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lm
@@ -24,7 +27,8 @@
      pacman -S mingw-w64-x86_64-SDL2
 
    Controls:
-     ESC = quit
+     A / S / W / D = Left / Down / Up / Right
+     ESC            = quit
    ========================================================================== */
 
 #include <SDL2/SDL.h>
@@ -59,6 +63,19 @@ static const SDL_Color BG_BOTTOM = { 10,  5, 25, 255 };
 /* Retro grid line color (dim cyan) */
 static const SDL_Color GRID_COLOR = { 0, 200, 255, 40 };
 
+/* Key bindings for keyboard test mode, matching lane order 0..3
+   (Left, Down, Up, Right) -> A, S, W, D */
+static const SDL_Scancode LANE_KEYS[NUM_LANES] = {
+    SDL_SCANCODE_A,
+    SDL_SCANCODE_S,
+    SDL_SCANCODE_W,
+    SDL_SCANCODE_D
+};
+static const char *LANE_KEY_NAMES[NUM_LANES] = { "A", "S", "W", "D" };
+
+/* How long (ms) a key-press flash stays visible on the hit line */
+#define FLASH_DURATION_MS 150.0
+
 /* ---------------------------- Data types --------------------------------- */
 
 typedef struct {
@@ -89,6 +106,10 @@ static Note notes[MAX_NOTES];
 static int note_count = 0;
 static int next_chart_index = 0;
 static double chart_loop_offset_ms = 0.0;
+
+/* Timestamp (ms) of the most recent keypress per lane, used to drive the
+   flash feedback at the hit line. -1 means "never pressed". */
+static double last_press_time_ms[NUM_LANES] = { -1, -1, -1, -1 };
 
 /* ---------------------------- Arrow shape drawing -------------------------
    Builds an actual arrow silhouette (triangular head + rectangular shaft)
@@ -248,7 +269,7 @@ int main(int argc, char **argv) {
     }
 
     SDL_Window *win = SDL_CreateWindow(
-        "DDR Visual - Arcade Style",
+        "DDR Visual - Step 2: Keyboard Input (WASD)",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         WINDOW_W, WINDOW_H, SDL_WINDOW_SHOWN
     );
@@ -273,8 +294,18 @@ int main(int argc, char **argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                running = 0;
+            if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+                if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                    running = 0;
+                }
+                for (int lane = 0; lane < NUM_LANES; lane++) {
+                    if (e.key.keysym.scancode == LANE_KEYS[lane]) {
+                        double now_ms = (double)(SDL_GetTicks() - start_ticks);
+                        last_press_time_ms[lane] = now_ms;
+                        printf("Key press: lane %d (%s)\n", lane, LANE_KEY_NAMES[lane]);
+                        fflush(stdout);
+                    }
+                }
             }
         }
 
@@ -316,14 +347,31 @@ int main(int argc, char **argv) {
         SDL_Rect hitline = { lane_x(0), HIT_LINE_Y, lane_x(NUM_LANES - 1) + LANE_WIDTH - lane_x(0), 4 };
         SDL_RenderFillRect(ren, &hitline);
 
-        /* dim target arrow outlines sitting on the hit line */
+        /* dim target arrow outlines sitting on the hit line -- flash bright
+           with a glow when the corresponding key was just pressed */
         for (int lane = 0; lane < NUM_LANES; lane++) {
             SDL_Color c = LANE_COLORS[lane];
-            SDL_Color dim = { c.r, c.g, c.b, 90 };
             int box_x = lane_x(lane) + (LANE_WIDTH - ARROW_SIZE) / 2;
             int box_y = HIT_LINE_Y - ARROW_SIZE / 2;
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-            draw_arrow(ren, (float)box_x, (float)box_y, (float)ARROW_SIZE, (float)ARROW_SIZE, lane, dim);
+
+            double since_press = (last_press_time_ms[lane] < 0)
+                ? 1e18
+                : (song_time_ms - last_press_time_ms[lane]);
+
+            if (since_press < FLASH_DURATION_MS) {
+                /* flashing: bright, full glow, slightly enlarged */
+                double t = since_press / FLASH_DURATION_MS; /* 0..1 */
+                int flash_size = ARROW_SIZE + (int)(14 * (1.0 - t));
+                int flash_box_x = lane_x(lane) + (LANE_WIDTH - flash_size) / 2;
+                int flash_box_y = HIT_LINE_Y - flash_size / 2;
+                SDL_Color bright = c;
+                bright.a = (Uint8)(255 * (1.0 - t) + 60 * t);
+                draw_arrow_neon(ren, flash_box_x, flash_box_y, flash_size, lane, bright);
+            } else {
+                SDL_Color dim = { c.r, c.g, c.b, 90 };
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                draw_arrow(ren, (float)box_x, (float)box_y, (float)ARROW_SIZE, (float)ARROW_SIZE, lane, dim);
+            }
         }
 
         /* falling notes, drawn as glowing outlined neon arrows */
