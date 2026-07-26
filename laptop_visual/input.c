@@ -20,14 +20,19 @@ void input_init(void) {
     }
 }
 
-void input_handle_keydown(SDL_Scancode scancode, double now_ms) {
+int input_lane_for_scancode(SDL_Scancode scancode) {
     for (int lane = 0; lane < NUM_LANES; lane++) {
-        if (scancode == LANE_KEYS[lane]) {
-            last_press_time_ms[lane] = now_ms;
-            printf("Key press: lane %d (%s)\n", lane, LANE_KEY_NAMES[lane]);
-            fflush(stdout);
-        }
+        if (scancode == LANE_KEYS[lane]) return lane;
     }
+    return -1;
+}
+
+void input_handle_keydown(SDL_Scancode scancode, double now_ms) {
+    int lane = input_lane_for_scancode(scancode);
+    if (lane == -1) return;
+    last_press_time_ms[lane] = now_ms;
+    printf("Key press: lane %d (%s)\n", lane, LANE_KEY_NAMES[lane]);
+    fflush(stdout);
 }
 
 double input_get_last_press(int lane) {

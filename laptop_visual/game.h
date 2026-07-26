@@ -1,32 +1,42 @@
 #ifndef GAME_H
 #define GAME_H
 
+#include "common.h"
+
 /* ==========================================================================
-   game.h — game state and logic: note spawning, falling, and (later)
-   scoring. Deliberately has no SDL rendering calls in it -- this module
-   only tracks *what* is happening in the game, not how it looks on
-   screen. That separation is what let us swap the TFT for a laptop
-   window without touching any of this logic.
+   game.h — game state and logic: note spawning, falling, and hit judging.
+   No SDL rendering calls in here -- this module only tracks *what* is
+   happening in the game, not how it looks on screen.
    ========================================================================== */
 
 typedef struct {
     int lane;
     double spawn_time_ms;
     double y;
-    int active;
+    int active;   /* still on screen / eligible to be hit */
+    int judged;    /* already scored (hit or auto-missed) -- won't be judged again */
 } Note;
 
-/* Resets game state (called once at startup). */
 void game_init(void);
 
-/* Advances the game by one frame: spawns any notes that are due, and
-   updates the vertical position of all active notes. Call this once
-   per frame with the current song clock in milliseconds. */
-void game_update(double song_time_ms);
+/* Advances the game by one frame: spawns due notes, updates their
+   position, and auto-misses any note that scrolled past the hit line
+   without being pressed (registering JUDGE_MISS with scoring.c internally).
+   Returns JUDGE_MISS if at least one auto-miss happened this frame (so
+   main.c can trigger a "MISS" flash), otherwise JUDGE_NONE.
+   Note: if multiple notes auto-miss in the same frame, only one MISS
+   flash is reported -- a deliberate simplification, each miss still
+   counts toward score/combo regardless. */
+Judgment game_update(double song_time_ms);
 
-/* Returns a read-only pointer to the current notes array and writes the
-   active count into *out_count. The renderer uses this to know what to
-   draw; nothing outside game.c should modify notes directly. */
+/* Attempts to hit the closest unjudged note in the given lane. If a note
+   is within JUDGE_WINDOW_PX of the hit line, it's judged (PERFECT/GREAT/
+   GOOD/BOO based on distance), scored via scoring.c, and consumed.
+   If no note is close enough, returns JUDGE_NONE and nothing is consumed
+   -- pressing with nothing nearby is simply ignored, not punished. */
+Judgment game_try_hit(int lane, double song_time_ms);
+
+/* Read-only access for the renderer. */
 const Note *game_get_notes(int *out_count);
 
 #endif /* GAME_H */

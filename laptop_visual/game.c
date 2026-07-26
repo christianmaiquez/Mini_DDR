@@ -1,11 +1,10 @@
+#include <math.h>
 #include "game.h"
-#include "common.h"
+#include "scoring.h"
 
 /* ---------------------------- Chart ---------------------------------------
    Simple hard-coded pattern: {lane, time_ms}. Placeholder rhythm --
-   swap for real song timing later (e.g. generated from actual music
-   beat-mapping data). Kept private to this file -- nothing outside
-   game.c needs to know the chart format. */
+   swap for real song timing later. Kept private to this file. */
 
 typedef struct { int lane; double time_ms; } ChartEntry;
 
@@ -16,7 +15,7 @@ static ChartEntry CHART[] = {
     {0,  4600}, {1,  4900}, {2,  5200}, {3,  5500},
 };
 static const int CHART_LEN = sizeof(CHART) / sizeof(CHART[0]);
-static const double CHART_LOOP_MS = 6500.0; /* restart the pattern every 6.5s */
+static const double CHART_LOOP_MS = 6500.0;
 
 /* ---------------------------- State --------------------------------------- */
 
@@ -34,6 +33,7 @@ static void spawn_note(int lane, double spawn_time_ms) {
     n->spawn_time_ms = spawn_time_ms;
     n->y = SPAWN_Y;
     n->active = 1;
+    n->judged = 0;
 }
 
 static void update_spawner(double song_time_ms) {
@@ -53,16 +53,40 @@ static void update_spawner(double song_time_ms) {
     }
 }
 
-static void update_notes(double song_time_ms) {
+/* Classifies a hit purely by pixel distance from the hit line. */
+static Judgment classify_distance(double dist_px) {
+    if (dist_px <= PERFECT_PX) return JUDGE_PERFECT;
+    if (dist_px <= GREAT_PX)   return JUDGE_GREAT;
+    if (dist_px <= GOOD_PX)    return JUDGE_GOOD;
+    if (dist_px <= JUDGE_WINDOW_PX) return JUDGE_BOO;
+    return JUDGE_NONE; /* too far to judge at all */
+}
+
+/* Advances note positions and auto-misses anything that scrolled past
+   the judge window unhit. Returns JUDGE_MISS if at least one miss
+   happened this frame, for the caller to trigger a flash. */
+static Judgment update_notes(double song_time_ms) {
+    Judgment miss_this_frame = JUDGE_NONE;
+
     for (int i = 0; i < note_count; i++) {
         Note *n = &notes[i];
         if (!n->active) continue;
+
         double elapsed = song_time_ms - n->spawn_time_ms;
         n->y = SPAWN_Y + elapsed * NOTE_SPEED_PXMS;
+
+        if (!n->judged && n->y > HIT_LINE_Y + JUDGE_WINDOW_PX) {
+            n->judged = 1;
+            n->active = 0;
+            scoring_register(JUDGE_MISS);
+            miss_this_frame = JUDGE_MISS;
+        }
+
         if (n->y > WINDOW_H + 50) {
             n->active = 0;
         }
     }
+    return miss_this_frame;
 }
 
 /* ---------------------------- Public API ----------------------------------- */
@@ -73,9 +97,35 @@ void game_init(void) {
     chart_loop_offset_ms = 0.0;
 }
 
-void game_update(double song_time_ms) {
+Judgment game_update(double song_time_ms) {
     update_spawner(song_time_ms);
-    update_notes(song_time_ms);
+    return update_notes(song_time_ms);
+}
+
+Judgment game_try_hit(int lane, double song_time_ms) {
+    int best_idx = -1;
+    double best_dist = 1e18;
+
+    for (int i = 0; i < note_count; i++) {
+        Note *n = &notes[i];
+        if (!n->active || n->judged || n->lane != lane) continue;
+        double dist = fabs(n->y - HIT_LINE_Y);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_idx = i;
+        }
+    }
+
+    if (best_idx == -1) return JUDGE_NONE; /* nothing to hit in this lane */
+
+    Judgment j = classify_distance(best_dist);
+    if (j == JUDGE_NONE) return JUDGE_NONE; /* found a note, but too far to count */
+
+    Note *n = &notes[best_idx];
+    n->judged = 1;
+    n->active = 0;
+    scoring_register(j);
+    return j;
 }
 
 const Note *game_get_notes(int *out_count) {

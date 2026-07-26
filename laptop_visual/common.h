@@ -44,4 +44,68 @@ static inline int lane_x(int lane) {
     return start_x + lane * (LANE_WIDTH + LANE_GAP);
 }
 
+/* ---------------------------- Scoring / judgment ---------------------------
+   Shared between game.c (decides which judgment a press earns), scoring.c
+   (converts a judgment into points/combo effects), and render.c (shows
+   the judgment as neon flash text) -- so it lives here rather than in any
+   one of those modules. */
+
+typedef enum {
+    JUDGE_NONE,     /* no note was close enough to judge -- press ignored */
+    JUDGE_PERFECT,
+    JUDGE_GREAT,
+    JUDGE_GOOD,
+    JUDGE_BOO,
+    JUDGE_MISS      /* note scrolled past unhit */
+} Judgment;
+
+/* Distance (pixels) from the hit line within which a press counts as
+   each judgment tier. Beyond JUDGE_WINDOW_PX, a press is ignored entirely
+   (treated as pressing with nothing there yet) rather than punished.
+   Tune these after playtesting -- tighter = harder. */
+#define PERFECT_PX      12
+#define GREAT_PX        28
+#define GOOD_PX         50
+#define JUDGE_WINDOW_PX 80   /* BOO tier upper bound; also the auto-miss distance */
+
+static inline int judgment_points(Judgment j) {
+    switch (j) {
+        case JUDGE_PERFECT: return 10;
+        case JUDGE_GREAT:   return 5;
+        case JUDGE_GOOD:    return 2;
+        case JUDGE_BOO:     return 0;
+        case JUDGE_MISS:    return 0;
+        default:            return 0;
+    }
+}
+
+static inline const char *judgment_label(Judgment j) {
+    switch (j) {
+        case JUDGE_PERFECT: return "PERFECT!";
+        case JUDGE_GREAT:   return "GREAT";
+        case JUDGE_GOOD:    return "GOOD";
+        case JUDGE_BOO:     return "BOO";
+        case JUDGE_MISS:    return "MISS";
+        default:            return "";
+    }
+}
+
+static inline SDL_Color judgment_color(Judgment j) {
+    switch (j) {
+        case JUDGE_PERFECT: return (SDL_Color){ 255,  20, 220, 255 }; /* hot magenta */
+        case JUDGE_GREAT:   return (SDL_Color){   0, 230, 255, 255 }; /* cyan */
+        case JUDGE_GOOD:    return (SDL_Color){  80, 255,  60, 255 }; /* green */
+        case JUDGE_BOO:     return (SDL_Color){ 255, 220,   0, 255 }; /* yellow */
+        case JUDGE_MISS:    return (SDL_Color){ 255,  40,  40, 255 }; /* red */
+        default:            return (SDL_Color){ 255, 255, 255, 255 };
+    }
+}
+
+/* Font used for HUD/score text. Change this to a .ttf you actually have if
+   this default path doesn't exist on your machine (e.g. bundle a font next
+   to the .exe and point this at "./font.ttf" instead). */
+#define FONT_PATH "C:\\Windows\\Fonts\\arialbd.ttf"
+#define FONT_SIZE_LARGE 40
+#define FONT_SIZE_SMALL 22
+
 #endif /* COMMON_H */
