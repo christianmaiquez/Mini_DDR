@@ -1,13 +1,14 @@
 /* ==========================================================================
-   STEP 1: FALLING ARROWS VISUAL
+   STEP 1: FALLING ARROWS VISUAL — ARCADE / NEON STYLE
    --------------------------------------------------------------------------
-   The simplest possible version of the game visual:
-     - 4 lanes (Left, Down, Up, Right)
-     - Colored blocks ("notes") spawn at the top and fall toward a
-       horizontal hit line
-     - Notes disappear once they pass the bottom of the screen
+   Same core mechanic as before (4 lanes, arrows fall to a hit line), now
+   styled to look more like an actual arcade DDR cabinet:
+     - Bright neon color palette (magenta / cyan / green / yellow)
+     - Gradient background with a retro synthwave grid, not flat dark gray
+     - Arrows have a black outline + soft glow for contrast and pop
+     - Neon-bordered lanes with a translucent colored panel
 
-   No scoring, no key input yet -- this is purely the visual foundation.
+   No scoring, no key input yet -- still purely the visual foundation.
    We'll add:
      Step 2: key press detection (WASD test mode)
      Step 3: scoring based on hits
@@ -17,7 +18,10 @@
      gcc arrows_visual.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lm
      ./arrows_visual.exe
 
-   (No SDL2_ttf needed yet -- we're not drawing any text in this step.)
+   Requires SDL2 2.0.18+ (SDL_RenderGeometry). If you get an "undefined
+   reference to SDL_RenderGeometry" linker error, update SDL2:
+     pacman -Syu
+     pacman -S mingw-w64-x86_64-SDL2
 
    Controls:
      ESC = quit
@@ -39,13 +43,21 @@
 #define SPAWN_Y         (-ARROW_SIZE)
 #define MAX_NOTES       256
 
-/* Lane order: 0=Left, 1=Down, 2=Up, 3=Right */
+/* Bright neon lane colors. Lane order: 0=Left, 1=Down, 2=Up, 3=Right */
 static const SDL_Color LANE_COLORS[NUM_LANES] = {
-    {230, 60, 60, 255},   /* left  - red    */
-    {60, 200, 90, 255},   /* down  - green  */
-    {70, 130, 230, 255},  /* up    - blue   */
-    {230, 200, 40, 255}   /* right - yellow */
+    {255,   0, 160, 255},   /* left  - neon magenta/pink */
+    {  0, 230, 255, 255},   /* down  - neon cyan         */
+    { 80, 255,  60, 255},   /* up    - neon green        */
+    {255, 220,   0, 255}    /* right - neon yellow       */
 };
+
+/* Background gradient: deep purple/indigo at top -> near-black indigo at
+   bottom, so neon elements pop but it's not flat dark gray. */
+static const SDL_Color BG_TOP    = { 45, 10, 70, 255 };
+static const SDL_Color BG_BOTTOM = { 10,  5, 25, 255 };
+
+/* Retro grid line color (dim cyan) */
+static const SDL_Color GRID_COLOR = { 0, 200, 255, 40 };
 
 /* ---------------------------- Data types --------------------------------- */
 
@@ -57,9 +69,8 @@ typedef struct {
 } Note;
 
 /* ---------------------------- Chart ---------------------------------------
-   Simple hard-coded pattern: {lane, time_ms}. This is just a placeholder
-   rhythm so you have something to look at -- swap for real song timing
-   later. */
+   Simple hard-coded pattern: {lane, time_ms}. Placeholder rhythm --
+   swap for real song timing later. */
 
 typedef struct { int lane; double time_ms; } ChartEntry;
 
@@ -81,15 +92,9 @@ static double chart_loop_offset_ms = 0.0;
 
 /* ---------------------------- Arrow shape drawing -------------------------
    Builds an actual arrow silhouette (triangular head + rectangular shaft)
-   using SDL_RenderGeometry, which fills triangles with solid color.
-   Requires SDL2 2.0.18+ (standard in current MSYS2 packages -- if you get
-   an "undefined reference to SDL_RenderGeometry" linker error, run
-   `pacman -Syu` in MSYS2 to update your SDL2 package).
-
-   The template below is defined pointing UP, as 3 triangles (9 points)
-   in a normalized 0..1 x 0..1 box: a triangular head on top, a rectangular
-   shaft below it. map_point() rotates this template to point in whichever
-   direction the lane needs (left/down/up/right). */
+   using SDL_RenderGeometry. Template points below are for an UP-pointing
+   arrow in a normalized 0..1 x 0..1 box; map_arrow_point() rotates it to
+   whichever direction a lane needs. */
 
 static const float ARROW_PTS[9][2] = {
     /* head triangle: tip, right-base, left-base */
@@ -100,26 +105,23 @@ static const float ARROW_PTS[9][2] = {
     {0.3f, 0.45f}, {0.7f, 1.0f}, {0.3f, 1.0f},
 };
 
-/* Maps a normalized "pointing up" template point (u,v) into actual pixel
-   coordinates for a given lane direction, within box [x,y,w,h].
-   Lane order matches LANE_COLORS: 0=Left, 1=Down, 2=Up, 3=Right. */
 static void map_arrow_point(int lane, float u, float v,
                              float x, float y, float w, float h,
                              float *out_x, float *out_y) {
     switch (lane) {
-        case 0: /* left: rotate so tip points left */
+        case 0: /* left */
             *out_x = x + v * w;
             *out_y = y + u * h;
             break;
-        case 1: /* down: flip vertically so tip points down */
+        case 1: /* down */
             *out_x = x + u * w;
             *out_y = y + (1.0f - v) * h;
             break;
-        case 2: /* up: template is already up-pointing */
+        case 2: /* up */
             *out_x = x + u * w;
             *out_y = y + v * h;
             break;
-        case 3: /* right: mirror of left */
+        case 3: /* right */
         default:
             *out_x = x + (1.0f - v) * w;
             *out_y = y + u * h;
@@ -127,13 +129,12 @@ static void map_arrow_point(int lane, float u, float v,
     }
 }
 
-static void draw_arrow(SDL_Renderer *ren, int x, int y, int w, int h,
+static void draw_arrow(SDL_Renderer *ren, float x, float y, float w, float h,
                         int lane, SDL_Color color) {
     SDL_Vertex verts[9];
     for (int i = 0; i < 9; i++) {
         float px, py;
-        map_arrow_point(lane, ARROW_PTS[i][0], ARROW_PTS[i][1],
-                         (float)x, (float)y, (float)w, (float)h, &px, &py);
+        map_arrow_point(lane, ARROW_PTS[i][0], ARROW_PTS[i][1], x, y, w, h, &px, &py);
         verts[i].position.x = px;
         verts[i].position.y = py;
         verts[i].color = color;
@@ -141,6 +142,32 @@ static void draw_arrow(SDL_Renderer *ren, int x, int y, int w, int h,
         verts[i].tex_coord.y = 0.0f;
     }
     SDL_RenderGeometry(ren, NULL, verts, 9, NULL, 0);
+}
+
+/* Draws an arrow with a soft additive glow, a black outline, and a bright
+   fill on top -- gives it that punchy arcade-cabinet look instead of a
+   flat silhouette. */
+static void draw_arrow_neon(SDL_Renderer *ren, int box_x, int box_y, int size,
+                             int lane, SDL_Color color) {
+    /* Glow: a few enlarged, low-alpha copies using additive blending */
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+    for (int i = 3; i >= 1; i--) {
+        int grow = i * 6;
+        SDL_Color glow = color;
+        glow.a = (Uint8)(35 / i);
+        draw_arrow(ren, (float)(box_x - grow / 2), (float)(box_y - grow / 2),
+                   (float)(size + grow), (float)(size + grow), lane, glow);
+    }
+
+    /* Black outline: slightly enlarged solid black copy behind the fill */
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_Color outline = {0, 0, 0, 255};
+    int ol = 5;
+    draw_arrow(ren, (float)(box_x - ol / 2), (float)(box_y - ol / 2),
+               (float)(size + ol), (float)(size + ol), lane, outline);
+
+    /* Bright neon fill on top */
+    draw_arrow(ren, (float)box_x, (float)box_y, (float)size, (float)size, lane, color);
 }
 
 /* ---------------------------- Helpers ------------------------------------ */
@@ -160,8 +187,6 @@ static void spawn_note(int lane, double spawn_time_ms) {
     n->active = 1;
 }
 
-/* Pulls notes from CHART[] as the clock reaches their spawn time, looping
-   the pattern forever so the demo runs indefinitely. */
 static void update_spawner(double song_time_ms) {
     while (1) {
         if (next_chart_index >= CHART_LEN) {
@@ -191,6 +216,27 @@ static void update_notes(double song_time_ms) {
     }
 }
 
+/* Vertical gradient background + a faint retro grid overlay */
+static void draw_background(SDL_Renderer *ren) {
+    for (int row = 0; row < WINDOW_H; row++) {
+        float t = (float)row / (float)WINDOW_H;
+        Uint8 r = (Uint8)(BG_TOP.r + (BG_BOTTOM.r - BG_TOP.r) * t);
+        Uint8 g = (Uint8)(BG_TOP.g + (BG_BOTTOM.g - BG_TOP.g) * t);
+        Uint8 b = (Uint8)(BG_TOP.b + (BG_BOTTOM.b - BG_TOP.b) * t);
+        SDL_SetRenderDrawColor(ren, r, g, b, 255);
+        SDL_RenderDrawLine(ren, 0, row, WINDOW_W, row);
+    }
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
+    for (int x = 0; x < WINDOW_W; x += 40) {
+        SDL_RenderDrawLine(ren, x, 0, x, WINDOW_H);
+    }
+    for (int y = 0; y < WINDOW_H; y += 40) {
+        SDL_RenderDrawLine(ren, 0, y, WINDOW_W, y);
+    }
+}
+
 /* ---------------------------- Main ---------------------------------------- */
 
 int main(int argc, char **argv) {
@@ -202,7 +248,7 @@ int main(int argc, char **argv) {
     }
 
     SDL_Window *win = SDL_CreateWindow(
-        "DDR Visual - Step 1: Falling Arrows",
+        "DDR Visual - Arcade Style",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         WINDOW_W, WINDOW_H, SDL_WINDOW_SHOWN
     );
@@ -237,44 +283,60 @@ int main(int argc, char **argv) {
         update_notes(song_time_ms);
 
         /* ---- render ---- */
-        SDL_SetRenderDrawColor(ren, 15, 15, 25, 255);
-        SDL_RenderClear(ren);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        draw_background(ren);
 
-        /* lane backgrounds */
+        /* lane panels: translucent neon-tinted fill + bright glowing border */
         for (int lane = 0; lane < NUM_LANES; lane++) {
+            SDL_Color c = LANE_COLORS[lane];
             SDL_Rect lane_rect = { lane_x(lane), 0, LANE_WIDTH, WINDOW_H };
-            SDL_SetRenderDrawColor(ren, 30, 30, 45, 255);
+
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 22);
             SDL_RenderFillRect(ren, &lane_rect);
 
-            SDL_SetRenderDrawColor(ren, 60, 60, 80, 255);
+            /* glowing border: a couple of additive outline passes */
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 90);
             SDL_RenderDrawRect(ren, &lane_rect);
+            SDL_Rect inset = { lane_rect.x + 1, lane_rect.y, lane_rect.w - 2, lane_rect.h };
+            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 50);
+            SDL_RenderDrawRect(ren, &inset);
         }
 
-        /* hit line */
-        SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
+        /* hit line: bright white with neon glow */
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);
+        for (int i = 3; i >= 1; i--) {
+            SDL_SetRenderDrawColor(ren, 255, 255, 255, (Uint8)(60 / i));
+            SDL_Rect glow_line = { lane_x(0), HIT_LINE_Y - i, lane_x(NUM_LANES - 1) + LANE_WIDTH - lane_x(0), 4 + i * 2 };
+            SDL_RenderFillRect(ren, &glow_line);
+        }
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
         SDL_Rect hitline = { lane_x(0), HIT_LINE_Y, lane_x(NUM_LANES - 1) + LANE_WIDTH - lane_x(0), 4 };
         SDL_RenderFillRect(ren, &hitline);
 
-        /* dim target arrow outlines sitting on the hit line, showing
-           where each lane's arrows are headed */
+        /* dim target arrow outlines sitting on the hit line */
         for (int lane = 0; lane < NUM_LANES; lane++) {
             SDL_Color c = LANE_COLORS[lane];
-            SDL_Color dim = { c.r / 4, c.g / 4, c.b / 4, 255 };
+            SDL_Color dim = { c.r, c.g, c.b, 90 };
             int box_x = lane_x(lane) + (LANE_WIDTH - ARROW_SIZE) / 2;
             int box_y = HIT_LINE_Y - ARROW_SIZE / 2;
-            draw_arrow(ren, box_x, box_y, ARROW_SIZE, ARROW_SIZE, lane, dim);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            draw_arrow(ren, (float)box_x, (float)box_y, (float)ARROW_SIZE, (float)ARROW_SIZE, lane, dim);
         }
 
-        /* falling notes, drawn as real arrow shapes */
+        /* falling notes, drawn as glowing outlined neon arrows */
         for (int i = 0; i < note_count; i++) {
             Note *n = &notes[i];
             if (!n->active) continue;
             SDL_Color c = LANE_COLORS[n->lane];
             int box_x = lane_x(n->lane) + (LANE_WIDTH - ARROW_SIZE) / 2;
             int box_y = (int)n->y;
-            draw_arrow(ren, box_x, box_y, ARROW_SIZE, ARROW_SIZE, n->lane, c);
+            draw_arrow_neon(ren, box_x, box_y, ARROW_SIZE, n->lane, c);
         }
 
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_RenderPresent(ren);
         SDL_Delay(1);
     }
