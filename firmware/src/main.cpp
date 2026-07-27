@@ -25,7 +25,7 @@
 
      LEDs (single colour, one per pad):
      LED Left  -> GPIO14 (via 330 ohm resistor)
-     LED Down  -> GPIO13 (via 330 ohm resistor)
+     LED Down  -> GPIO15 (via 330 ohm resistor)
      LED Up    -> GPIO27 (via 330 ohm resistor)
      LED Right -> GPIO4  (via 330 ohm resistor)
    ========================================================================== */
@@ -56,7 +56,7 @@ const int FSR_PINS[NUM_LANES] = { 34, 35, 32, 33 }; /* L, D, U, R */
 
 /* LED pins — one per pad, same order as FSR_PINS: L, D, U, R
    Each LED wired with a 330 ohm current limiting resistor to GND. */
-const int LED_PINS[NUM_LANES] = { 14, 13, 27, 4 }; /* L, D, U, R */
+const int LED_PINS[NUM_LANES] = { 14, 15, 27, 4 }; /* L, D, U, R */
 
 /* How long the LED stays on after a hit in milliseconds */
 #define LED_FLASH_MS 150
