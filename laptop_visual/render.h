@@ -11,6 +11,9 @@
 void render_init(void);
 void render_shutdown(void);
 
+/* Clears per-game effects so replay starts cleanly. */
+void render_reset_game(void);
+
 /* Triggers the big center-screen judgment flash (e.g. "PERFECT!"). */
 void render_set_judgment_flash(Judgment j, double now_ms);
 
@@ -24,6 +27,9 @@ void render_on_hit(int lane, Judgment j, int milestone_combo, double now_ms);
    steadily increasing clock (doesn't need to be the gameplay clock --
    the menu runs before gameplay starts). */
 void render_draw_menu(SDL_Renderer *ren, double time_ms);
+
+/* Draws the final score and judgment totals after the 45-second game. */
+void render_draw_results(SDL_Renderer *ren, double time_ms);
 
 /* Draws one full gameplay frame. */
 void render_frame(SDL_Renderer *ren, double song_time_ms,

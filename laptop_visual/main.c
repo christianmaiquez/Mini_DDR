@@ -18,7 +18,8 @@
      Menu:     1 / 2 / 3 = Easy / Normal / Hard
      Gameplay: A / S / W / D = Left / Down / Up / Right
                ESP32 serial messages HIT:0 through HIT:3 use the same lanes
-     ESC = quit (from either screen)
+     Results:  R = replay, M = difficulty menu
+     ESC = quit (from any screen)
 
    Run with the ESP32 COM port as the first argument, for example:
      ./arrows_visual.exe COM5
@@ -38,7 +39,7 @@
 #include "scoring.h"
 #include "serial_input.h"
 
-typedef enum { STATE_MENU, STATE_PLAYING } AppState;
+typedef enum { STATE_MENU, STATE_PLAYING, STATE_RESULTS } AppState;
 
 /* Keyboard and ESP32 presses both come through this function, so they use
    exactly the same hit detection, score, combo and visual feedback. */
@@ -50,6 +51,17 @@ static void process_lane_hit(int lane, double now_ms) {
     if (j != JUDGE_NONE) {
         render_on_hit(lane, j, milestone, now_ms);
     }
+}
+
+static void start_game(Difficulty chosen, Uint32 *start_ticks, AppState *state) {
+    game_set_difficulty(chosen);
+    game_init();
+    input_init();
+    scoring_init();
+    render_reset_game();
+    *start_ticks = SDL_GetTicks();
+    *state = STATE_PLAYING;
+    serial_input_send_command("MUSIC:START");
 }
 
 int main(int argc, char **argv) {
@@ -93,6 +105,7 @@ int main(int argc, char **argv) {
     }
 
     AppState state = STATE_MENU;
+    Difficulty selected_difficulty = DIFF_NORMAL;
     Uint32 start_ticks = SDL_GetTicks(); /* used both for menu animation and, after
                                               a difficulty is chosen, reset to mark
                                               the start of the gameplay clock */
@@ -107,27 +120,17 @@ int main(int argc, char **argv) {
                 if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
                     running = 0;
                 } else if (state == STATE_MENU) {
-                    Difficulty chosen;
                     int picked = 1;
                     switch (e.key.keysym.scancode) {
-                        case SDL_SCANCODE_1: chosen = DIFF_EASY;   break;
-                        case SDL_SCANCODE_2: chosen = DIFF_NORMAL; break;
-                        case SDL_SCANCODE_3: chosen = DIFF_HARD;   break;
-                        default: picked = 0; chosen = DIFF_NORMAL; break;
+                        case SDL_SCANCODE_1: selected_difficulty = DIFF_EASY;   break;
+                        case SDL_SCANCODE_2: selected_difficulty = DIFF_NORMAL; break;
+                        case SDL_SCANCODE_3: selected_difficulty = DIFF_HARD;   break;
+                        default: picked = 0; break;
                     }
                     if (picked) {
-                        game_set_difficulty(chosen);
-                        game_init();
-                        input_init();
-                        scoring_init();
-                        start_ticks = SDL_GetTicks(); /* gameplay clock starts now */
-                        state = STATE_PLAYING;
-
-                        /* The ESP32 starts/restarts its looping I2S track at
-                           the same moment as the laptop gameplay clock. */
-                        serial_input_send_command("MUSIC:START");
+                        start_game(selected_difficulty, &start_ticks, &state);
                     }
-                } else { /* STATE_PLAYING */
+                } else if (state == STATE_PLAYING) {
                     double now_ms = (double)(SDL_GetTicks() - start_ticks);
                     int lane = input_lane_for_scancode(e.key.keysym.scancode);
 
@@ -139,6 +142,13 @@ int main(int argc, char **argv) {
                         /* Keyboard input also flashes the matching physical
                            LED and plays the lane sound on the ESP32. */
                         serial_input_send_feedback(lane);
+                    }
+                } else { /* STATE_RESULTS */
+                    if (e.key.keysym.scancode == SDL_SCANCODE_R) {
+                        start_game(selected_difficulty, &start_ticks, &state);
+                    } else if (e.key.keysym.scancode == SDL_SCANCODE_M) {
+                        state = STATE_MENU;
+                        start_ticks = SDL_GetTicks();
                     }
                 }
             }
@@ -161,15 +171,23 @@ int main(int argc, char **argv) {
 
         if (state == STATE_MENU) {
             render_draw_menu(ren, (double)SDL_GetTicks());
-        } else {
+        } else if (state == STATE_PLAYING) {
             Judgment auto_result = game_update(time_ms);
             if (auto_result == JUDGE_MISS) {
                 render_set_judgment_flash(JUDGE_MISS, time_ms);
             }
 
-            int note_count = 0;
-            const Note *notes = game_get_notes(&note_count);
-            render_frame(ren, time_ms, notes, note_count);
+            if (time_ms >= GAME_DURATION_MS && !game_has_active_notes()) {
+                serial_input_send_command("MUSIC:STOP");
+                state = STATE_RESULTS;
+                render_draw_results(ren, (double)SDL_GetTicks());
+            } else {
+                int note_count = 0;
+                const Note *notes = game_get_notes(&note_count);
+                render_frame(ren, time_ms, notes, note_count);
+            }
+        } else {
+            render_draw_results(ren, (double)SDL_GetTicks());
         }
 
         SDL_RenderPresent(ren);

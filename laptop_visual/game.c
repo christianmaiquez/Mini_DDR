@@ -55,12 +55,14 @@ static void spawn_note(int lane, double spawn_time_ms) {
 
 /* Randomly generates upcoming notes as the song clock approaches their
    scheduled arrival time. Hit times are quantised to the same 120 BPM
-   eighth-note grid as the ESP32 music. Runs forever because the track loops. */
+   eighth-note grid as the ESP32 music. No target is scheduled after the
+   45-second game boundary. */
 static void update_spawner(double song_time_ms) {
     double travel_ms = HIT_LINE_Y / current_note_speed;
     const DifficultyParams *dp = &DIFF_PARAMS[current_difficulty];
 
-    while (next_hit_time_ms - travel_ms <= song_time_ms) {
+    while (next_hit_time_ms <= GAME_DURATION_MS &&
+           next_hit_time_ms - travel_ms <= song_time_ms) {
         int lane = rand() % NUM_LANES;
         /* light anti-repeat: avoid the exact same lane twice in a row
            when there's more than one lane to choose from */
@@ -177,4 +179,11 @@ Judgment game_try_hit(int lane, double song_time_ms, int *out_milestone) {
 const Note *game_get_notes(int *out_count) {
     if (out_count) *out_count = note_count;
     return notes;
+}
+
+int game_has_active_notes(void) {
+    for (int i = 0; i < note_count; i++) {
+        if (notes[i].active && !notes[i].judged) return 1;
+    }
+    return 0;
 }

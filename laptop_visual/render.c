@@ -349,7 +349,7 @@ static void render_text_neon(SDL_Renderer *ren, TTF_Font *font, const char *text
     SDL_DestroyTexture(tex);
 }
 
-static void draw_hud(SDL_Renderer *ren) {
+static void draw_hud(SDL_Renderer *ren, double song_time_ms) {
     char buf[96];
     SDL_Color white  = {255, 255, 255, 255};
     SDL_Color cyan   = {  0, 230, 255, 255};
@@ -363,6 +363,12 @@ static void draw_hud(SDL_Renderer *ren) {
 
     snprintf(buf, sizeof(buf), "MAX COMBO: %d", scoring_get_max_combo());
     render_text_neon(ren, g_font_small, buf, WINDOW_W - 180, 15, yellow, 0);
+
+    double remaining_ms = GAME_DURATION_MS - song_time_ms;
+    if (remaining_ms < 0.0) remaining_ms = 0.0;
+    int remaining_seconds = (int)ceil(remaining_ms / 1000.0);
+    snprintf(buf, sizeof(buf), "TIME: %02d", remaining_seconds);
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 20, white, 1);
 }
 
 static void draw_judgment_flash(SDL_Renderer *ren, double song_time_ms) {
@@ -420,6 +426,46 @@ void render_draw_menu(SDL_Renderer *ren, double time_ms) {
                       WINDOW_W / 2, 500, white, 1);
 }
 
+/* ---------------------------- Results screen -------------------------------- */
+
+void render_draw_results(SDL_Renderer *ren, double time_ms) {
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    draw_background(ren, time_ms);
+
+    SDL_Color white   = {255, 255, 255, 255};
+    SDL_Color magenta = {255,   0, 160, 255};
+    SDL_Color cyan    = {  0, 230, 255, 255};
+    SDL_Color green   = { 80, 255,  60, 255};
+    SDL_Color yellow  = {255, 220,   0, 255};
+    SDL_Color red     = {255,  40,  40, 255};
+
+    char buf[96];
+    render_text_neon(ren, g_font_huge ? g_font_huge : g_font_large,
+                     "RESULTS", WINDOW_W / 2, 45, magenta, 1);
+
+    snprintf(buf, sizeof(buf), "FINAL SCORE: %d", scoring_get_score());
+    render_text_neon(ren, g_font_large, buf, WINDOW_W / 2, 125, white, 1);
+
+    snprintf(buf, sizeof(buf), "MAX COMBO: %d", scoring_get_max_combo());
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 185, yellow, 1);
+
+    snprintf(buf, sizeof(buf), "PERFECT: %d", scoring_get_count(JUDGE_PERFECT));
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 250, magenta, 1);
+    snprintf(buf, sizeof(buf), "GREAT: %d", scoring_get_count(JUDGE_GREAT));
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 285, cyan, 1);
+    snprintf(buf, sizeof(buf), "GOOD: %d", scoring_get_count(JUDGE_GOOD));
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 320, green, 1);
+    snprintf(buf, sizeof(buf), "BOO: %d", scoring_get_count(JUDGE_BOO));
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 355, yellow, 1);
+    snprintf(buf, sizeof(buf), "MISS: %d", scoring_get_count(JUDGE_MISS));
+    render_text_neon(ren, g_font_small, buf, WINDOW_W / 2, 390, red, 1);
+
+    render_text_neon(ren, g_font_small,
+                     "R = replay  |  M = difficulty menu  |  ESC = quit",
+                     WINDOW_W / 2, 500, white, 1);
+    draw_crt_overlay(ren);
+}
+
 /* ---------------------------- Public API ----------------------------------- */
 
 void render_init(void) {
@@ -436,6 +482,19 @@ void render_init(void) {
         fprintf(stderr, "TTF_OpenFont failed for '%s' (continuing without text): %s\n",
                 FONT_PATH, TTF_GetError());
     }
+}
+
+void render_reset_game(void) {
+    g_flash_judgment = JUDGE_NONE;
+    g_flash_time_ms = -1e18;
+    g_milestone_value = 0;
+    g_milestone_time_ms = -1e18;
+    g_screen_flash_time_ms = -1e18;
+    g_particle_next = 0;
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        g_particles[i].active = 0;
+    }
+    dancer_init();
 }
 
 void render_shutdown(void) {
@@ -479,7 +538,7 @@ void render_frame(SDL_Renderer *ren, double song_time_ms,
     draw_falling_notes(ren, notes, note_count);
     draw_particles(ren, song_time_ms);
     dancer_draw(ren, song_time_ms);
-    draw_hud(ren);
+    draw_hud(ren, song_time_ms);
     draw_judgment_flash(ren, song_time_ms);
     draw_milestone_flash(ren, song_time_ms);
     draw_screen_flash(ren, song_time_ms);

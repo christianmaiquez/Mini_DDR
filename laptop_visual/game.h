@@ -28,10 +28,10 @@ void game_set_difficulty(Difficulty d);
    you want to change it. */
 void game_init(void);
 
-/* Advances the game by one frame: randomly spawns due notes, updates
-   their position, and auto-misses anything that scrolled past the judge
-   window unhit. Returns JUDGE_MISS if at least one auto-miss happened
-   this frame (for triggering a flash), otherwise JUDGE_NONE. */
+/* Advances the game by one frame. Notes are generated only when their
+   intended hit time is within GAME_DURATION_MS (45 seconds). Existing notes
+   continue moving after that boundary so the final notes can be completed.
+   Returns JUDGE_MISS if at least one auto-miss happened this frame. */
 Judgment game_update(double song_time_ms);
 
 /* Attempts to hit the closest unjudged note in the given lane. If out_milestone
@@ -41,5 +41,9 @@ Judgment game_update(double song_time_ms);
 Judgment game_try_hit(int lane, double song_time_ms, int *out_milestone);
 
 const Note *game_get_notes(int *out_count);
+
+/* Returns non-zero while at least one spawned note still needs to be hit or
+   auto-missed. Used to wait for the final notes before showing results. */
+int game_has_active_notes(void);
 
 #endif /* GAME_H */

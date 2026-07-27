@@ -22,6 +22,7 @@
 #define SPAWN_Y         (-ARROW_SIZE)
 #define MAX_NOTES       256
 #define FLASH_DURATION_MS 150.0
+#define GAME_DURATION_MS 45000.0  /* 45-second playable song/chart */
 
 /* Bright neon lane colors. Lane order: 0=Left, 1=Down, 2=Up, 3=Right */
 static const SDL_Color LANE_COLORS[NUM_LANES] = {
