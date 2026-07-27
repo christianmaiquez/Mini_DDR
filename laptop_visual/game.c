@@ -18,7 +18,7 @@ typedef struct {
 static const DifficultyParams DIFF_PARAMS[3] = {
     /* EASY   */ { 0.22, 700.0, 1100.0, 0.05 },
     /* NORMAL */ { 0.35, 450.0,  800.0, 0.15 },
-    /* HARD   */ { 0.50, 300.0,  550.0, 0.30 },
+    /* HARD   */ { 0.50, 250.0,  500.0, 0.30 },
 };
 
 static Difficulty current_difficulty = DIFF_NORMAL;
@@ -54,8 +54,8 @@ static void spawn_note(int lane, double spawn_time_ms) {
 }
 
 /* Randomly generates upcoming notes as the song clock approaches their
-   scheduled arrival time. Runs forever -- there's no fixed song length
-   yet, it just keeps generating new beats. */
+   scheduled arrival time. Hit times are quantised to the same 120 BPM
+   eighth-note grid as the ESP32 music. Runs forever because the track loops. */
 static void update_spawner(double song_time_ms) {
     double travel_ms = HIT_LINE_Y / current_note_speed;
     const DifficultyParams *dp = &DIFF_PARAMS[current_difficulty];
@@ -80,8 +80,15 @@ static void update_spawner(double song_time_ms) {
             }
         }
 
-        double gap = dp->min_gap_ms + rand01() * (dp->max_gap_ms - dp->min_gap_ms);
-        next_hit_time_ms += gap;
+        /* The ESP32 track is 120 BPM, so one eighth note is 250 ms.
+           Quantise random gaps to that grid so note arrivals land on beats. */
+        const double eighth_note_ms = 250.0;
+        int min_steps = (int)ceil(dp->min_gap_ms / eighth_note_ms);
+        int max_steps = (int)floor(dp->max_gap_ms / eighth_note_ms);
+        if (max_steps < min_steps) max_steps = min_steps;
+
+        int step_gap = min_steps + rand() % (max_steps - min_steps + 1);
+        next_hit_time_ms += step_gap * eighth_note_ms;
     }
 }
 

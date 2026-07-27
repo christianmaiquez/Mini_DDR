@@ -122,6 +122,10 @@ int main(int argc, char **argv) {
                         scoring_init();
                         start_ticks = SDL_GetTicks(); /* gameplay clock starts now */
                         state = STATE_PLAYING;
+
+                        /* The ESP32 starts/restarts its looping I2S track at
+                           the same moment as the laptop gameplay clock. */
+                        serial_input_send_command("MUSIC:START");
                     }
                 } else { /* STATE_PLAYING */
                     double now_ms = (double)(SDL_GetTicks() - start_ticks);
@@ -131,6 +135,10 @@ int main(int argc, char **argv) {
 
                     if (lane != -1) {
                         process_lane_hit(lane, now_ms);
+
+                        /* Keyboard input also flashes the matching physical
+                           LED and plays the lane sound on the ESP32. */
+                        serial_input_send_feedback(lane);
                     }
                 }
             }
@@ -168,6 +176,8 @@ int main(int argc, char **argv) {
         SDL_Delay(1);
     }
 
+    /* Stop the amplifier track before releasing the COM port. */
+    serial_input_send_command("MUSIC:STOP");
     serial_input_close();
     render_shutdown();
     SDL_DestroyRenderer(ren);

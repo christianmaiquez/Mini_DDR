@@ -23,7 +23,7 @@ int serial_input_open(const char *port_name) {
 
     serial_handle = CreateFileA(
         device_path,
-        GENERIC_READ,
+        GENERIC_READ | GENERIC_WRITE,
         0,
         NULL,
         OPEN_EXISTING,
@@ -74,7 +74,7 @@ int serial_input_open(const char *port_name) {
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
-    timeouts.WriteTotalTimeoutConstant = 0;
+    timeouts.WriteTotalTimeoutConstant = 50;
 
     if (!SetCommTimeouts(serial_handle, &timeouts)) {
         fprintf(stderr, "SetCommTimeouts failed (Windows error %lu).\n",
@@ -161,4 +161,41 @@ int serial_input_poll(int *out_lanes, int max_lanes) {
     }
 
     return hit_count;
+}
+
+
+int serial_input_send_command(const char *command) {
+    if (!serial_input_is_open() || !command || command[0] == '\0') return 0;
+
+    char output[128];
+    int length = snprintf(output, sizeof(output), "%s\n", command);
+    if (length <= 0 || length >= (int)sizeof(output)) {
+        fprintf(stderr, "Serial command is too long.\n");
+        return 0;
+    }
+
+    DWORD bytes_written = 0;
+    BOOL ok = WriteFile(
+        serial_handle,
+        output,
+        (DWORD)length,
+        &bytes_written,
+        NULL
+    );
+
+    if (!ok || bytes_written != (DWORD)length) {
+        fprintf(stderr, "Serial write failed (Windows error %lu).\n",
+                (unsigned long)GetLastError());
+        return 0;
+    }
+
+    return 1;
+}
+
+int serial_input_send_feedback(int lane) {
+    if (lane < 0 || lane > 3) return 0;
+
+    char command[32];
+    snprintf(command, sizeof(command), "FEEDBACK:%d", lane);
+    return serial_input_send_command(command);
 }

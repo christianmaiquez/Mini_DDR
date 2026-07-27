@@ -13,6 +13,13 @@ void serial_input_close(void);
    in out_lanes. Returns the number of hits written, up to max_lanes. */
 int serial_input_poll(int *out_lanes, int max_lanes);
 
+/* Sends one command line to the ESP32, adding a newline automatically.
+   Returns 1 if the complete command was written. */
+int serial_input_send_command(const char *command);
+
+/* Tells the ESP32 to flash a lane LED and play its hit sound. */
+int serial_input_send_feedback(int lane);
+
 /* Returns non-zero while the serial port is open. */
 int serial_input_is_open(void);
 
