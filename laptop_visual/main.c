@@ -4,7 +4,7 @@
    Orchestration only. Flow: difficulty menu -> gameplay loop.
 
    Build (Windows / MSYS2 MINGW64 terminal), from inside laptop_visual/:
-     gcc main.c game.c input.c render.c scoring.c dancer.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
+     gcc main.c game.c input.c render.c scoring.c dancer.c serial_input.c -o arrows_visual.exe -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
      ./arrows_visual.exe
 
    Requires SDL2 2.0.18+ (SDL_RenderGeometry) and SDL2_ttf. If "undefined
@@ -17,7 +17,13 @@
    Controls:
      Menu:     1 / 2 / 3 = Easy / Normal / Hard
      Gameplay: A / S / W / D = Left / Down / Up / Right
+               ESP32 serial messages HIT:0 through HIT:3 use the same lanes
      ESC = quit (from either screen)
+
+   Run with the ESP32 COM port as the first argument, for example:
+     ./arrows_visual.exe COM5
+
+   Run without an argument for keyboard-only mode.
    ========================================================================== */
 
 #include <SDL2/SDL.h>
@@ -30,11 +36,23 @@
 #include "input.h"
 #include "render.h"
 #include "scoring.h"
+#include "serial_input.h"
 
 typedef enum { STATE_MENU, STATE_PLAYING } AppState;
 
+/* Keyboard and ESP32 presses both come through this function, so they use
+   exactly the same hit detection, score, combo and visual feedback. */
+static void process_lane_hit(int lane, double now_ms) {
+    if (lane < 0 || lane >= NUM_LANES) return;
+
+    int milestone = 0;
+    Judgment j = game_try_hit(lane, now_ms, &milestone);
+    if (j != JUDGE_NONE) {
+        render_on_hit(lane, j, milestone, now_ms);
+    }
+}
+
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;
 
     srand((unsigned int)time(NULL));
 
@@ -64,6 +82,15 @@ int main(int argc, char **argv) {
 
     render_init();
     input_init();
+
+    if (argc >= 2) {
+        if (!serial_input_open(argv[1])) {
+            fprintf(stderr, "Continuing in keyboard-only mode.\n");
+        }
+    } else {
+        printf("Keyboard-only mode. To use the ESP32, run: %s COM5\n", argv[0]);
+        printf("Replace COM5 with the ESP32 port shown in Device Manager.\n");
+    }
 
     AppState state = STATE_MENU;
     Uint32 start_ticks = SDL_GetTicks(); /* used both for menu animation and, after
@@ -103,13 +130,22 @@ int main(int argc, char **argv) {
                     input_handle_keydown(e.key.keysym.scancode, now_ms);
 
                     if (lane != -1) {
-                        int milestone = 0;
-                        Judgment j = game_try_hit(lane, now_ms, &milestone);
-                        if (j != JUDGE_NONE) {
-                            render_on_hit(lane, j, milestone, now_ms);
-                        }
+                        process_lane_hit(lane, now_ms);
                     }
                 }
+            }
+        }
+
+        /* Drain all currently available serial messages without blocking.
+           Poll in the menu too so old pad presses cannot build up and score
+           immediately when gameplay starts. */
+        int serial_lanes[16];
+        int serial_hit_count = serial_input_poll(serial_lanes, 16);
+        if (state == STATE_PLAYING) {
+            for (int i = 0; i < serial_hit_count; i++) {
+                double now_ms = (double)(SDL_GetTicks() - start_ticks);
+                input_register_lane_press(serial_lanes[i], now_ms);
+                process_lane_hit(serial_lanes[i], now_ms);
             }
         }
 
@@ -132,6 +168,7 @@ int main(int argc, char **argv) {
         SDL_Delay(1);
     }
 
+    serial_input_close();
     render_shutdown();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

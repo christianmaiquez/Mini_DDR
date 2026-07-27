@@ -27,10 +27,15 @@ int input_lane_for_scancode(SDL_Scancode scancode) {
     return -1;
 }
 
+void input_register_lane_press(int lane, double now_ms) {
+    if (lane < 0 || lane >= NUM_LANES) return;
+    last_press_time_ms[lane] = now_ms;
+}
+
 void input_handle_keydown(SDL_Scancode scancode, double now_ms) {
     int lane = input_lane_for_scancode(scancode);
     if (lane == -1) return;
-    last_press_time_ms[lane] = now_ms;
+    input_register_lane_press(lane, now_ms);
     printf("Key press: lane %d (%s)\n", lane, LANE_KEY_NAMES[lane]);
     fflush(stdout);
 }
