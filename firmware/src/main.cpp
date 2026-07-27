@@ -51,7 +51,7 @@
 
 #define NUM_LANES 4
 
-const int FSR_PINS[NUM_LANES] = {35, 34, 32, 33};
+const int FSR_PINS[NUM_LANES] = {33, 32, 34, 35};
 const int LED_PINS[NUM_LANES] = {14, 13, 27, 4};
 
 #define FSR_THRESHOLD   1200
