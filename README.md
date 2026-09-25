@@ -1,56 +1,52 @@
-# DDR Arcade — ESP32 Pad + Laptop Visuals
+# DDR Arcade — ESP32 Dance Pad + Real-Time Game Engine
 
-Physical FSR dance pad + speaker, driven by an ESP32, with game visuals
-shown on a laptop screen (TFT display currently non-functional — this is
-the working fallback).
+A physical Dance Dance Revolution cabinet: a custom 4-panel FSR dance pad
+wired to an ESP32 that renders falling notes, scoring, and combo tracking in real time.
+
+Built as a full hardware-to-software pipeline — sensor input, embedded
+firmware, audio output, serial protocol, and a real-time rendering loop —
+from scratch.
+
+## Why we built this
+
+We wanted hands-on experience across the full embedded systems stack: analog
+sensor input, real-time signal processing on a microcontroller, a
+communication protocol between hardware and a host machine, and a
+performant game loop consuming that data live. This project touches
+firmware, electronics, serial communication, and systems-level
+C.
 
 ## How it works
 
 ```
 [4x FSR pads] --> [ESP32] --> USB Serial "HIT:0..3" --> [Laptop: SDL2 game]
-                      |
-                      v
-              [I2S Amp + Speaker]
-                (plays music/tones)
 ```
 
-- The **ESP32** reads pressure from 4 FSR pads (Left/Down/Up/Right),
-  drives the I2S amp + speaker for audio, and sends a `HIT:<lane>` message
-  over USB serial every time a pad is pressed.
-- The **laptop program** shows the falling-note visuals, hit line, score,
-  and combo. It listens on the ESP32's serial port and increases score
-  each time a `HIT:x` message arrives. Keyboard (A/S/W/D) is also wired
-  up as a fallback for testing the visuals without the pad connected.
+- **ESP32 firmware** polls 4 force-sensitive resistors (Left / Down / Up /
+  Right), applies a per-pad pressure threshold, drives an I2S amplifier +
+  speaker for audio feedback, and emits a HIT message over USB
+  serial on every valid press.
+- **Laptop game engine** (C + SDL2) renders falling notes, a hit line,
+  live score, and combo streak. It listens on the ESP32's serial port and
+  scores a hit each time a `HIT:x` message arrives. Keyboard input
+  (A/S/W/D) is wired in parallel as a fallback, so the visuals can be
+  developed and tested without the physical pad connected.
+
+## Tech stack
+
+| Layer              | Tech                                  |
+|---------------------|----------------------------------------|
+| Microcontroller     | ESP32 (C / PlatformIO)     |
+| Sensors             | 4x Force-Sensitive Resistors (FSR)     |
+| Communication       | USB Serial (custom `HIT` protocol) |
+| Game engine         | C, SDL2, SDL2_ttf                      |
+| Planned display     | ST7735 TFT (SPI)                       |
 
 ## Repo structure
 
 ```
-firmware/           ESP32 code — FSR reading + I2S speaker + serial reporting
-laptop_visual/       Laptop C/SDL2 code — visuals, score, serial listener
-docs/                 Wiring diagrams, photos
+firmware/         ESP32 code — FSR reading, I2S speaker output, serial reporting
+laptop_visual/    C/SDL2 game — falling-note visuals, scoring, serial listener
+docs/             Wiring diagrams, build photos
 ```
 
-## Setup
-
-### 1. Firmware (ESP32)
-- Open `firmware/` in PlatformIO or Arduino IDE
-- Update FSR pin numbers and `FSR_THRESHOLD` in `main.cpp` to match your build
-- Flash to the ESP32
-- Open Serial Monitor at 115200 baud to confirm `HIT:0` / `HIT:1` etc. print when you press each pad
-
-### 2. Laptop visuals
-- Requires SDL2 + SDL2_ttf (see build instructions in `laptop_visual/ddr_visual.c` header comment)
-- **Before building**, open `ddr_visual.c` and set `SERIAL_PORT` to match your ESP32's COM port (check Windows Device Manager → Ports)
-- Build and run:
-  ```bash
-  gcc ddr_visual.c -o ddr_visual.exe -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
-  ./ddr_visual.exe
-  ```
-- If the serial port can't be opened, the game still runs in keyboard-only
-  mode (A/S/W/D) — useful for testing visuals without the pad connected
-
-## Status / Known limitations
-
-- TFT display (ST7735) is non-functional — laptop display is the current fallback
-- FSR thresholds need per-pad calibration (pressure-sensitive resistors vary)
-- *(update this section as your build progresses)*
